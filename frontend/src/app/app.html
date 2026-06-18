@@ -1,0 +1,30 @@
+<header class="site-header">
+  <div class="container bar">
+    <a class="brand" routerLink="/">
+      <span class="brand-mark">◆</span>
+      <span class="brand-name">ecommerce</span>
+      <span class="brand-tag">demo</span>
+    </a>
+
+    <nav class="nav">
+      <a routerLink="/" routerLinkActive="active" [routerLinkActiveOptions]="{ exact: true }">Shop</a>
+      <a class="cart-link" routerLink="/cart" routerLinkActive="active">
+        <span class="cart-ico" aria-hidden="true">🛒</span>
+        <span>Cart</span>
+        @if (cart.count() > 0) {
+          <span class="badge">{{ cart.count() }}</span>
+        }
+      </a>
+    </nav>
+  </div>
+</header>
+
+<main class="container">
+  <router-outlet />
+</main>
+
+<footer class="site-footer">
+  <div class="container">
+    <p>© {{ year }} ecommerce (working title) — demo storefront. Data is generated and cleaned for this project.</p>
+  </div>
+</footer>

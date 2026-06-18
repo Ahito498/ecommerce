@@ -1,0 +1,82 @@
+@if (loading()) {
+  <div class="detail">
+    <div class="skeleton media"></div>
+    <div class="info">
+      <div class="skeleton line w-40"></div>
+      <div class="skeleton line w-80"></div>
+      <div class="skeleton line w-60"></div>
+    </div>
+  </div>
+} @else if (notFound()) {
+  <div class="state">
+    <h2>Product not found</h2>
+    <p>The product you’re looking for doesn’t exist or was removed.</p>
+    <a class="btn btn-primary" routerLink="/">Back to shop</a>
+  </div>
+} @else if (product(); as p) {
+  <a class="back" routerLink="/">‹ Back to shop</a>
+
+  <article class="detail">
+    <div class="media surface">
+      <app-product-image [name]="p.name" [accent]="p.accentColor" />
+    </div>
+
+    <div class="info">
+      <span class="cat">{{ p.category }}</span>
+      <h1>{{ p.name }}</h1>
+
+      <div class="rating">
+        <span class="star">★</span>
+        <strong>{{ p.rating }}</strong>
+        <span class="muted">({{ p.ratingCount }} ratings)</span>
+      </div>
+
+      <div class="price">{{ p.price | money }}</div>
+
+      <p class="desc">{{ p.description }}</p>
+
+      <div class="stock" [class.out]="p.stock === 0">
+        @if (p.stock > 0) {
+          <span class="dot"></span> In stock — {{ p.stock }} available
+        } @else {
+          <span class="dot"></span> Out of stock
+        }
+      </div>
+
+      <div class="buy">
+        <div class="stepper" role="group" aria-label="Quantity">
+          <button type="button" (click)="changeQuantity(-1)" [disabled]="quantity() <= 1" aria-label="Decrease">−</button>
+          <span class="qty">{{ quantity() }}</span>
+          <button type="button" (click)="changeQuantity(1)" [disabled]="p.stock > 0 && quantity() >= p.stock" aria-label="Increase">+</button>
+        </div>
+
+        <button
+          type="button"
+          class="btn btn-primary add"
+          [class.done]="added()"
+          [disabled]="p.stock === 0"
+          (click)="addToCart()"
+        >
+          {{ added() ? 'Added to cart ✓' : 'Add to cart' }}
+        </button>
+      </div>
+
+      <dl class="meta">
+        <div><dt>SKU</dt><dd>{{ p.id }}</dd></div>
+        <div><dt>Units sold</dt><dd>{{ p.unitsSold }}</dd></div>
+        <div><dt>Return rate</dt><dd>{{ p.returnRate }}%</dd></div>
+      </dl>
+    </div>
+  </article>
+
+  @if (related().length > 0) {
+    <section class="related">
+      <h2>More in {{ p.category }}</h2>
+      <div class="rel-grid">
+        @for (r of related(); track r.id) {
+          <app-product-card [product]="r" />
+        }
+      </div>
+    </section>
+  }
+}

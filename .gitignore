@@ -1,0 +1,28 @@
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+/frontend/dist/
+.angular/
+
+# Environment
+.env
+*.local
+
+# Logs
+*.log
+npm-debug.log*
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/*
+!.vscode/extensions.json
+
+# Mongo data volume (docker)
+/data/db/
+
+# Claude Code local settings (keep launch.json for the preview panel)
+.claude/settings.local.json

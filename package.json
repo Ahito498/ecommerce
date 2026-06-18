@@ -1,0 +1,18 @@
+{
+  "name": "ecommerce",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Storefront demo — Angular frontend, Node/Express/MongoDB API, and a data-cleaning pipeline.",
+  "scripts": {
+    "install:all": "npm --prefix backend install && npm --prefix frontend install",
+    "data:generate": "node data/generate-raw.js",
+    "data:clean": "node data/clean.js",
+    "data": "npm run data:generate && npm run data:clean",
+    "seed": "npm --prefix backend run seed",
+    "start:backend": "npm --prefix backend start",
+    "start:frontend": "npm --prefix frontend start"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}

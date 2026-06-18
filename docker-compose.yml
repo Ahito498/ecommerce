@@ -1,0 +1,15 @@
+# Optional local MongoDB for the backend.
+#   docker compose up -d mongo
+# then set MONGODB_URI=mongodb://127.0.0.1:27017 in backend/.env
+services:
+  mongo:
+    image: mongo:7
+    container_name: ecommerce-mongo
+    restart: unless-stopped
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongo-data:/data/db
+
+volumes:
+  mongo-data:

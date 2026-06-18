@@ -1,0 +1,61 @@
+<h1 class="title">Your cart</h1>
+
+@if (cart.lines().length === 0) {
+  <div class="empty surface">
+    <span class="empty-ico" aria-hidden="true">🛒</span>
+    <h2>Your cart is empty</h2>
+    <p>Browse the catalog and add a few products.</p>
+    <a class="btn btn-primary" routerLink="/">Start shopping</a>
+  </div>
+} @else {
+  <div class="layout">
+    <section class="lines">
+      @for (line of cart.lines(); track line.product.id) {
+        <div class="line surface">
+          <a class="thumb" [routerLink]="['/product', line.product.slug]">
+            <app-product-image [name]="line.product.name" [accent]="line.product.accentColor" />
+          </a>
+
+          <div class="line-main">
+            <a class="line-name" [routerLink]="['/product', line.product.slug]">{{ line.product.name }}</a>
+            <span class="line-cat">{{ line.product.category }}</span>
+            <button type="button" class="remove" (click)="remove(line.product.id)">Remove</button>
+          </div>
+
+          <div class="stepper" role="group" aria-label="Quantity">
+            <button type="button" (click)="changeQty(line.product.id, line.quantity - 1)" aria-label="Decrease">−</button>
+            <span class="qty">{{ line.quantity }}</span>
+            <button
+              type="button"
+              (click)="changeQty(line.product.id, line.quantity + 1)"
+              [disabled]="line.product.stock > 0 && line.quantity >= line.product.stock"
+              aria-label="Increase"
+            >+</button>
+          </div>
+
+          <div class="line-total">{{ line.product.price * line.quantity | money }}</div>
+        </div>
+      }
+
+      <button type="button" class="clear" (click)="clear()">Clear cart</button>
+    </section>
+
+    <aside class="summary surface">
+      <h2>Summary</h2>
+      <div class="row">
+        <span>Items</span>
+        <span>{{ cart.count() }}</span>
+      </div>
+      <div class="row">
+        <span>Subtotal</span>
+        <span>{{ cart.subtotal() | money }}</span>
+      </div>
+      <div class="row total">
+        <span>Total</span>
+        <span>{{ cart.subtotal() | money }}</span>
+      </div>
+      <button type="button" class="btn btn-primary checkout" disabled>Checkout</button>
+      <p class="note">Checkout &amp; orders are out of scope for this demo.</p>
+    </aside>
+  </div>
+}

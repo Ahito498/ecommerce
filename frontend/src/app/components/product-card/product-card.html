@@ -1,0 +1,32 @@
+<a class="card" [routerLink]="['/product', product().slug]">
+  <div class="media">
+    <app-product-image [name]="product().name" [accent]="product().accentColor" />
+    <span class="chip">{{ product().category }}</span>
+    @if (product().stock === 0) {
+      <span class="chip chip--out">Out of stock</span>
+    }
+  </div>
+
+  <div class="body">
+    <h3 class="name">{{ product().name }}</h3>
+
+    <div class="rating" aria-hidden="true">
+      <span class="star">★</span>
+      <span>{{ product().rating }}</span>
+      <span class="muted">({{ product().ratingCount }})</span>
+    </div>
+
+    <div class="foot">
+      <span class="price">{{ product().price | money }}</span>
+      <button
+        type="button"
+        class="add"
+        [class.add--done]="added()"
+        [disabled]="product().stock === 0"
+        (click)="addToCart($event)"
+      >
+        {{ added() ? 'Added ✓' : 'Add' }}
+      </button>
+    </div>
+  </div>
+</a>
