@@ -9,8 +9,8 @@
   </div>
 } @else if (notFound()) {
   <div class="state">
-    <h2>Product not found</h2>
-    <p>The product you’re looking for doesn’t exist or was removed.</p>
+    <h2>Category not found</h2>
+    <p>The collection you’re looking for doesn’t exist or was removed.</p>
     <a class="btn btn-primary" routerLink="/">Back to shop</a>
   </div>
 } @else if (product(); as p) {
@@ -22,8 +22,9 @@
     </div>
 
     <div class="info">
-      <span class="cat">{{ p.category }}</span>
+      <span class="cat">Collection</span>
       <h1>{{ p.name }}</h1>
+      <p class="tagline">{{ p.tagline }}</p>
 
       <div class="rating">
         <span class="star">★</span>
@@ -31,30 +32,24 @@
         <span class="muted">({{ p.ratingCount }} ratings)</span>
       </div>
 
-      <div class="price">{{ p.price | money }}</div>
+      <div class="price">
+        {{ p.price | money }}
+        <span class="range">median · {{ p.priceMin | money }} – {{ p.priceMax | money }}</span>
+      </div>
 
       <p class="desc">{{ p.description }}</p>
-
-      <div class="stock" [class.out]="p.stock === 0">
-        @if (p.stock > 0) {
-          <span class="dot"></span> In stock — {{ p.stock }} available
-        } @else {
-          <span class="dot"></span> Out of stock
-        }
-      </div>
 
       <div class="buy">
         <div class="stepper" role="group" aria-label="Quantity">
           <button type="button" (click)="changeQuantity(-1)" [disabled]="quantity() <= 1" aria-label="Decrease">−</button>
           <span class="qty">{{ quantity() }}</span>
-          <button type="button" (click)="changeQuantity(1)" [disabled]="p.stock > 0 && quantity() >= p.stock" aria-label="Increase">+</button>
+          <button type="button" (click)="changeQuantity(1)" aria-label="Increase">+</button>
         </div>
 
         <button
           type="button"
           class="btn btn-primary add"
           [class.done]="added()"
-          [disabled]="p.stock === 0"
           (click)="addToCart()"
         >
           {{ added() ? 'Added to cart ✓' : 'Add to cart' }}
@@ -62,16 +57,20 @@
       </div>
 
       <dl class="meta">
-        <div><dt>SKU</dt><dd>{{ p.id }}</dd></div>
+        <div><dt>Orders</dt><dd>{{ p.orders }}</dd></div>
         <div><dt>Units sold</dt><dd>{{ p.unitsSold }}</dd></div>
         <div><dt>Return rate</dt><dd>{{ p.returnRate }}%</dd></div>
+        <div><dt>Avg delivery</dt><dd>{{ p.avgDeliveryDays }} days</dd></div>
+        <div><dt>Top city</dt><dd>{{ p.topCity }}</dd></div>
+        <div><dt>Top channel</dt><dd>{{ p.topChannel }}</dd></div>
+        <div><dt>Top return reason</dt><dd>{{ p.topIssue }}</dd></div>
       </dl>
     </div>
   </article>
 
   @if (related().length > 0) {
     <section class="related">
-      <h2>More in {{ p.category }}</h2>
+      <h2>Other collections</h2>
       <div class="rel-grid">
         @for (r of related(); track r.id) {
           <app-product-card [product]="r" />

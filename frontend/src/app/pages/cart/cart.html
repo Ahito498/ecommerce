@@ -28,7 +28,7 @@
             <button
               type="button"
               (click)="changeQty(line.product.id, line.quantity + 1)"
-              [disabled]="line.product.stock > 0 && line.quantity >= line.product.stock"
+              [disabled]="line.quantity >= 99"
               aria-label="Increase"
             >+</button>
           </div>

@@ -1,6 +1,11 @@
 <section class="hero">
-  <h1>Discover great products</h1>
-  <p>A demo catalog of {{ total() }} products, built from cleaned order &amp; return data.</p>
+  <h1>Shop by category</h1>
+  <p>
+    {{ total() }} categories from the UrbanSouq storefront
+    @if (totalOrders() > 0) {
+      — built from {{ totalOrders() }} cleaned orders.
+    }
+  </p>
 </section>
 
 <div class="toolbar">
@@ -8,10 +13,10 @@
     <span class="search-ico" aria-hidden="true">🔎</span>
     <input
       type="search"
-      placeholder="Search products…"
+      placeholder="Search categories…"
       [value]="search()"
       (input)="onSearchInput($any($event.target).value)"
-      aria-label="Search products"
+      aria-label="Search categories"
     />
   </div>
 
@@ -25,20 +30,9 @@
   </label>
 </div>
 
-<div class="chips">
-  <button type="button" class="chip" [class.active]="category() === 'all'" (click)="setCategory('all')">
-    All
-  </button>
-  @for (c of categories(); track c.category) {
-    <button type="button" class="chip" [class.active]="category() === c.category" (click)="setCategory(c.category)">
-      {{ c.category }} <span class="count">{{ c.count }}</span>
-    </button>
-  }
-</div>
-
 @if (loading()) {
   <div class="grid">
-    @for (n of [1,2,3,4,5,6,7,8]; track n) {
+    @for (n of [1,2,3,4,5,6]; track n) {
       <div class="skeleton"></div>
     }
   </div>
@@ -49,7 +43,7 @@
   </div>
 } @else if (products().length === 0) {
   <div class="state">
-    <p>No products match your filters.</p>
+    <p>No categories match your search.</p>
   </div>
 } @else {
   <div class="grid">
@@ -57,18 +51,4 @@
       <app-product-card [product]="p" />
     }
   </div>
-
-  @if (pages() > 1) {
-    <nav class="pagination" aria-label="Pagination">
-      <button type="button" class="btn btn-outline" [disabled]="page() === 1" (click)="goToPage(page() - 1)">
-        ‹ Prev
-      </button>
-      @for (p of pageList(); track p) {
-        <button type="button" class="page-btn" [class.active]="p === page()" (click)="goToPage(p)">{{ p }}</button>
-      }
-      <button type="button" class="btn btn-outline" [disabled]="page() === pages()" (click)="goToPage(page() + 1)">
-        Next ›
-      </button>
-    </nav>
-  }
 }

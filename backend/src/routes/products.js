@@ -10,7 +10,7 @@ const SORTS = {
   'price-asc': { price: 1 },
   'price-desc': { price: -1 },
   rating: { rating: -1 },
-  popular: { unitsSold: -1 },
+  popular: { orders: -1 },
 };
 
 /**

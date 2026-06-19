@@ -56,16 +56,14 @@ export class ProductDetail implements OnInit {
   }
 
   private loadRelated(product: Product): void {
-    this.productService.list({ category: product.category, limit: 5 }).subscribe({
+    this.productService.list({ limit: 50 }).subscribe({
       next: (res) => this.related.set(res.items.filter((p) => p.id !== product.id).slice(0, 4)),
       error: () => this.related.set([]),
     });
   }
 
   changeQuantity(delta: number): void {
-    const product = this.product();
-    const max = product && product.stock > 0 ? product.stock : 99;
-    this.quantity.update((q) => Math.max(1, Math.min(q + delta, max)));
+    this.quantity.update((q) => Math.max(1, Math.min(q + delta, 99)));
   }
 
   addToCart(): void {

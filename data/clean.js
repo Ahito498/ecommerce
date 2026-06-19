@@ -1,114 +1,133 @@
 'use strict';
 
 /**
- * Clean the raw orders/returns data and derive a product catalog for the app.
+ * Clean the real orders/returns dataset (UrbanSouq) and derive a catalog.
  *
- * Reads : data/raw/orders_raw.csv
+ * Reads : data/raw/orders_raw.csv   (client's real export, ~940 rows)
  * Writes: data/clean/orders_clean.csv   (analysis-ready transactions)
  *         data/clean/products.json      (catalog consumed by the API/seed)
  *         data/clean/cleaning_report.md  (before/after summary)
  *
- * Cleaning steps:
- *   1. Trim and collapse whitespace on every field.
- *   2. Resolve each row to a master product by SKU, else by a normalised name
- *      key (case/spacing/punctuation insensitive). Unresolvable rows are dropped.
- *   3. Drop rows missing a usable order id.
- *   4. Parse prices written in many formats (currency symbols, thousands commas,
- *      european decimal commas); reject non-positive/outlier values.
- *   5. Parse quantities; impute missing and clamp invalid to 1.
- *   6. Parse dates from several formats to ISO (yyyy-mm-dd).
- *   7. Normalise status to {delivered, returned, cancelled} and clear return
- *      reasons that sit on non-returned rows; label missing reasons "Unspecified".
- *   8. Impute any still-missing price from the product's median price.
- *   9. Remove duplicate transaction lines (same order id + SKU).
- *  10. Derive one catalog entry per product with a data-driven price and stats.
+ * The dataset has NO product-level identity — the only product dimension is
+ * `product_category`. So the catalog is built at the CATEGORY level: each of
+ * the 6 categories becomes one storefront entry, enriched with REAL aggregated
+ * stats from the cleaned transactions (median price, average rating, units
+ * sold, return rate, average delivery time, top issue/city/channel).
+ *
+ * Cleaning highlights:
+ *   - normalise category (19 spellings -> 6), order status (16 -> 5),
+ *     issue reason (20 -> 5), data source (30 -> ~8)
+ *   - unify city names across case/typos/separators and Arabic⇄English
+ *     (e.g. cair0/القاهرة -> Cairo, alex/اسكندرية -> Alexandria)
+ *   - reject sentinel/garbage numerics (-999, 1000000) and out-of-range values
+ *   - parse dates to ISO, drop duplicate transaction lines
  */
 
 const fs = require('fs');
 const path = require('path');
 const { parse, stringify } = require('./lib/csv');
-const { PRODUCTS, ACCENTS } = require('./catalog');
 
-// ----- lookups -------------------------------------------------------------
-const normKey = (s) => String(s || '').toLowerCase().replace(/[^a-z0-9]/g, '');
-const masterBySku = new Map(PRODUCTS.map((p) => [p.sku.toUpperCase(), p]));
-const masterByKey = new Map(PRODUCTS.map((p) => [normKey(p.name), p]));
+// ----- category display metadata (accent + short tagline) ------------------
+const CATEGORY_META = {
+  Electronics: { accent: '#2563eb', tagline: 'Gadgets, devices and accessories' },
+  Fashion: { accent: '#db2777', tagline: 'Clothing, footwear and style' },
+  Beauty: { accent: '#9333ea', tagline: 'Skincare, cosmetics and care' },
+  Home: { accent: '#0d9488', tagline: 'Home, kitchen and living' },
+  Sports: { accent: '#ea580c', tagline: 'Fitness and outdoor gear' },
+  Books: { accent: '#ca8a04', tagline: 'Books and reading' },
+};
+const CATEGORY_ORDER = Object.keys(CATEGORY_META);
 
-// ----- field parsers -------------------------------------------------------
-const collapse = (s) => String(s || '').replace(/\s+/g, ' ').trim();
+// ----- normalisers ---------------------------------------------------------
+const collapse = (s) => String(s ?? '').replace(/\s+/g, ' ').trim();
+const sepWords = (s) => collapse(String(s ?? '').replace(/[-_]+/g, ' ')).toLowerCase();
+const titleFirst = (s) => (s ? s[0].toUpperCase() + s.slice(1) : s);
+const titleWords = (s) => s.split(' ').map(titleFirst).join(' ');
+const slugify = (s) => s.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
 
-function titleCase(s) {
-  return collapse(s)
-    .toLowerCase()
-    .replace(/\b\w/g, (c) => c.toUpperCase());
+function normCategory(raw) {
+  const k = collapse(raw).toLowerCase();
+  const map = { beauty: 'Beauty', fashion: 'Fashion', books: 'Books', book: 'Books', home: 'Home', sports: 'Sports', sport: 'Sports', electronics: 'Electronics' };
+  return map[k] || '';
 }
 
-function parsePrice(raw) {
-  const original = String(raw || '').trim();
-  if (!original) return { value: null, status: 'missing' };
-  // Strip currency symbols/words and spaces.
-  let s = original.replace(/egp/gi, '').replace(/\$/g, '').replace(/[a-z]/gi, '').trim();
-  const hadFormatting = s !== original.trim() || /[,]/.test(s);
-  if (s.includes(',') && s.includes('.')) {
-    s = s.replace(/,/g, ''); // 2,499.00 -> thousands comma
-  } else if (s.includes(',')) {
-    s = /^\d+,\d{2}$/.test(s) ? s.replace(',', '.') : s.replace(/,/g, '');
-  }
-  const value = parseFloat(s);
-  if (Number.isNaN(value)) return { value: null, status: 'missing' };
-  if (value <= 0 || value > 50000) return { value: null, status: 'invalid' }; // outlier -> impute later
-  return { value, status: hadFormatting ? 'reformatted' : 'ok' };
+function normStatus(raw) {
+  const k = collapse(raw).toLowerCase();
+  return ['cancelled', 'pending', 'processing', 'returned', 'completed'].includes(k) ? k : '';
 }
 
-function parseQuantity(raw) {
-  const s = String(raw || '').trim();
-  if (!s) return { value: 1, status: 'imputed' };
-  const n = parseFloat(s);
-  if (Number.isNaN(n) || n <= 0) return { value: 1, status: 'invalid' };
-  return { value: Math.floor(n), status: s.includes('.') ? 'reformatted' : 'ok' };
+function normIssue(raw) {
+  const k = sepWords(raw);
+  if (!k) return '';
+  return titleFirst(k); // "missing documents" -> "Missing documents"
+}
+
+function normSource(raw) {
+  const k = sepWords(raw);
+  if (!k) return '';
+  return k
+    .split(' ')
+    .map((w) => (['crm', 'erp', 'pos'].includes(w) ? w.toUpperCase() : titleFirst(w)))
+    .join(' ');
+}
+
+const CITY_ALIASES = {
+  cairo: 'Cairo', cair0: 'Cairo', القاهرة: 'Cairo',
+  giza: 'Giza', gizaa: 'Giza', الجيزة: 'Giza',
+  alexandria: 'Alexandria', alex: 'Alexandria', اسكندرية: 'Alexandria',
+  mansoura: 'Mansoura', 'el mansoura': 'Mansoura',
+  assiut: 'Assiut', asyut: 'Assiut', أسيوط: 'Assiut',
+  'beni suef': 'Beni Suef', 'بني سويف': 'Beni Suef',
+  zagazig: 'Zagazig', tanta: 'Tanta', luxor: 'Luxor', aswan: 'Aswan',
+  fayoum: 'Fayoum', ismailia: 'Ismailia', suez: 'Suez', minya: 'Minya', qena: 'Qena',
+};
+function normCity(raw) {
+  const k = sepWords(raw);
+  if (!k) return '';
+  return CITY_ALIASES[k] || titleWords(k);
+}
+
+/** Parse a number, rejecting blanks, sentinels (-999, 1000000) and out-of-range values. */
+function num(raw, { min = -Infinity, max = Infinity, integer = false } = {}) {
+  const s = collapse(raw);
+  if (s === '') return null;
+  const n = Number(s);
+  if (!Number.isFinite(n)) return null;
+  if (n === -999 || n === 1000000) return null; // known sentinels
+  if (n < min || n > max) return null;
+  return integer ? Math.round(n) : n;
 }
 
 const MONTHS = ['jan', 'feb', 'mar', 'apr', 'may', 'jun', 'jul', 'aug', 'sep', 'oct', 'nov', 'dec'];
 function parseDate(raw) {
-  const s = String(raw || '').trim();
-  if (!s) return null;
-  let y, mo, d;
-  let m = s.match(/^(\d{4})[-/](\d{1,2})[-/](\d{1,2})$/);
-  if (m) [, y, mo, d] = m.map(Number);
-  else if ((m = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/))) {
-    d = +m[1]; mo = +m[2]; y = +m[3];
-  } else if ((m = s.match(/^([A-Za-z]{3,})\s+(\d{1,2}),\s*(\d{4})$/))) {
-    mo = MONTHS.indexOf(m[1].slice(0, 3).toLowerCase()) + 1; d = +m[2]; y = +m[3];
-  } else return null;
-  if (!y || mo < 1 || mo > 12 || d < 1 || d > 31) return null;
+  const s = collapse(raw);
+  if (!s) return '';
+  let m, y, mo, d;
+  if ((m = s.match(/^(\d{4})[-/](\d{1,2})[-/](\d{1,2})$/))) [, y, mo, d] = m.map(Number);
+  else if ((m = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/))) { d = +m[1]; mo = +m[2]; y = +m[3]; }
+  else if ((m = s.match(/^([A-Za-z]{3,})\s+(\d{1,2}),\s*(\d{4})$/))) { mo = MONTHS.indexOf(m[1].slice(0, 3).toLowerCase()) + 1; d = +m[2]; y = +m[3]; }
+  else return '';
+  if (!y || mo < 1 || mo > 12 || d < 1 || d > 31) return '';
   const pad = (n) => String(n).padStart(2, '0');
   return `${y}-${pad(mo)}-${pad(d)}`;
 }
 
-function normStatus(raw) {
-  const s = String(raw || '').toLowerCase().trim();
-  if (['delivered', 'completed', 'complete'].includes(s)) return 'delivered';
-  if (['returned', 'ret', 'refunded'].includes(s)) return 'returned';
-  if (['cancelled', 'canceled', 'cancel'].includes(s)) return 'cancelled';
-  return 'unknown';
-}
-
-const median = (nums) => {
-  if (!nums.length) return null;
-  const a = [...nums].sort((x, y) => x - y);
-  const mid = Math.floor(a.length / 2);
-  return a.length % 2 ? a[mid] : (a[mid - 1] + a[mid]) / 2;
+const median = (a) => {
+  if (!a.length) return null;
+  const s = [...a].sort((x, y) => x - y);
+  const m = Math.floor(s.length / 2);
+  return s.length % 2 ? s[m] : (s[m - 1] + s[m]) / 2;
 };
-const slugify = (s) => s.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
-
-// Deterministic small hash so synthesised rating/stock are stable per product.
-function hash(str) {
-  let h = 2166136261;
-  for (let i = 0; i < str.length; i++) {
-    h ^= str.charCodeAt(i);
-    h = Math.imul(h, 16777619);
+const mean = (a) => (a.length ? a.reduce((s, x) => s + x, 0) / a.length : null);
+function mode(values) {
+  const counts = {};
+  let best = null, bestN = 0;
+  for (const v of values) {
+    if (!v) continue;
+    counts[v] = (counts[v] || 0) + 1;
+    if (counts[v] > bestN) { bestN = counts[v]; best = v; }
   }
-  return (h >>> 0) / 4294967296;
+  return best;
 }
 
 // ----- run -----------------------------------------------------------------
@@ -116,183 +135,210 @@ const raw = parse(fs.readFileSync(path.join(__dirname, 'raw', 'orders_raw.csv'),
 
 const stats = {
   rawRows: raw.length,
-  droppedMissingOrderId: 0,
-  droppedUnresolved: 0,
   duplicatesRemoved: 0,
-  pricesReformatted: 0,
-  pricesImputed: 0,
-  pricesInvalid: 0,
-  quantitiesImputed: 0,
-  quantitiesInvalid: 0,
-  datesUnparseable: 0,
-  namesNormalised: 0,
   categoriesNormalised: 0,
-  reasonsCleared: 0,
-  reasonsFilled: 0,
+  categoryMissing: 0,
+  statusNormalised: 0,
+  statusMissing: 0,
+  issuesNormalised: 0,
+  sourcesNormalised: 0,
+  citiesNormalised: 0,
+  pricesRejected: 0,
+  quantitiesRejected: 0,
+  ratingsRejected: 0,
+  datesUnparseable: 0,
+  rawCategoryVariants: new Set(),
+  rawStatusVariants: new Set(),
+  rawIssueVariants: new Set(),
+  rawSourceVariants: new Set(),
+  rawCityVariants: new Set(),
 };
 
-const cleaned = [];
-for (const row of raw) {
-  const orderId = collapse(row.order_id).toUpperCase();
-  if (!orderId) { stats.droppedMissingOrderId++; continue; }
+// First pass: clean every row.
+const cleanedAll = [];
+for (const r of raw) {
+  if (collapse(r.product_category)) stats.rawCategoryVariants.add(collapse(r.product_category));
+  if (collapse(r.order_status)) stats.rawStatusVariants.add(collapse(r.order_status));
+  if (collapse(r.issue_reason)) stats.rawIssueVariants.add(collapse(r.issue_reason));
+  if (collapse(r.data_source)) stats.rawSourceVariants.add(collapse(r.data_source));
+  if (collapse(r.city)) stats.rawCityVariants.add(collapse(r.city));
 
-  // Resolve product: prefer SKU, fall back to normalised name.
-  const sku = collapse(row.product_sku).toUpperCase();
-  let product = (sku && masterBySku.get(sku)) || masterByKey.get(normKey(row.product_name));
-  if (!product) { stats.droppedUnresolved++; continue; }
+  const category = normCategory(r.product_category);
+  if (!category) stats.categoryMissing++;
+  else if (collapse(r.product_category) !== category) stats.categoriesNormalised++;
 
-  if (collapse(row.product_name) !== product.name) stats.namesNormalised++;
-  if (collapse(row.category) !== product.category) stats.categoriesNormalised++;
+  const status = normStatus(r.order_status);
+  if (!status) stats.statusMissing++;
+  else if (collapse(r.order_status) !== status) stats.statusNormalised++;
 
-  const price = parsePrice(row.unit_price);
-  if (price.status === 'reformatted') stats.pricesReformatted++;
-  if (price.status === 'invalid') stats.pricesInvalid++;
+  const issue = normIssue(r.issue_reason);
+  if (issue && collapse(r.issue_reason) !== issue) stats.issuesNormalised++;
+  const source = normSource(r.data_source);
+  if (source && collapse(r.data_source) !== source) stats.sourcesNormalised++;
+  const city = normCity(r.city);
+  if (city && collapse(r.city) !== city) stats.citiesNormalised++;
 
-  const qty = parseQuantity(row.quantity);
-  if (qty.status === 'imputed') stats.quantitiesImputed++;
-  if (qty.status === 'invalid') stats.quantitiesInvalid++;
+  // Legit unit prices sit well under 20k; treat anything far above as garbage.
+  const unit_price = num(r.unit_price, { min: 0.01, max: 50000 });
+  if (collapse(r.unit_price) && unit_price === null) stats.pricesRejected++;
+  const quantity = num(r.quantity, { min: 1, max: 100000, integer: true });
+  if (collapse(r.quantity) && quantity === null) stats.quantitiesRejected++;
+  const customer_rating = num(r.customer_rating, { min: 1, max: 5, integer: true });
+  if (collapse(r.customer_rating) && customer_rating === null) stats.ratingsRejected++;
+  const discount_pct = num(r.discount_pct, { min: 0, max: 100 });
+  const delivery_days = num(r.delivery_days, { min: 0, max: 365, integer: true });
+  const net_amount = num(r.net_amount, { min: 0.01, max: 5000000 });
 
-  const date = parseDate(row.order_date);
-  if (row.order_date && !date) stats.datesUnparseable++;
+  const order_date = parseDate(r.order_date);
+  if (collapse(r.order_date) && !order_date) stats.datesUnparseable++;
 
-  const status = normStatus(row.status);
-
-  let reason = collapse(row.return_reason);
-  if (status !== 'returned') {
-    if (reason) stats.reasonsCleared++;
-    reason = '';
-  } else if (!reason) {
-    reason = 'Unspecified';
-    stats.reasonsFilled++;
-  }
-
-  cleaned.push({
-    order_id: orderId,
-    order_date: date || '',
-    customer_name: row.customer_name ? titleCase(row.customer_name) : '',
-    product_sku: product.sku,
-    product_name: product.name,
-    category: product.category,
-    unit_price: price.value, // may be null -> imputed below
-    quantity: qty.value,
-    status,
-    return_reason: reason,
+  cleanedAll.push({
+    order_record_id: collapse(r.order_record_id).toUpperCase(),
+    order_id: collapse(r.order_id).toUpperCase(),
+    customer_name: r.order_name ? titleWords(collapse(r.order_name).toLowerCase()) : '',
+    city,
+    order_date,
+    category,
+    order_status: status,
+    quantity: quantity ?? '',
+    unit_price: unit_price ?? '',
+    discount_pct: discount_pct ?? '',
+    net_amount: net_amount ?? '',
+    customer_rating: customer_rating ?? '',
+    delivery_days: delivery_days ?? '',
+    data_source: source,
+    marketing_channel: collapse(r.marketing_channel),
+    warehouse: collapse(r.warehouse),
+    device_type: collapse(r.device_type),
+    issue_reason: issue,
   });
 }
 
-// Impute missing/invalid prices from each product's median observed price.
-const pricesBySku = new Map();
-for (const r of cleaned) {
-  if (r.unit_price != null) {
-    if (!pricesBySku.has(r.product_sku)) pricesBySku.set(r.product_sku, []);
-    pricesBySku.get(r.product_sku).push(r.unit_price);
-  }
-}
-const medianPrice = new Map();
-for (const p of PRODUCTS) {
-  const observed = pricesBySku.get(p.sku) || [];
-  medianPrice.set(p.sku, observed.length ? median(observed) : p.price);
-}
-for (const r of cleaned) {
-  if (r.unit_price == null) {
-    r.unit_price = Math.round(medianPrice.get(r.product_sku) * 100) / 100;
-    stats.pricesImputed++;
-  }
-  r.line_total = Math.round(r.unit_price * r.quantity * 100) / 100;
-}
-
-// Remove duplicate transaction lines (same order id + SKU), keeping the first.
+// Drop duplicate transaction lines (same order_record_id), keeping the first.
 const seen = new Set();
-const deduped = [];
-for (const r of cleaned) {
-  const key = `${r.order_id}|${r.product_sku}`;
-  if (seen.has(key)) { stats.duplicatesRemoved++; continue; }
-  seen.add(key);
-  deduped.push(r);
+const cleaned = [];
+for (const r of cleanedAll) {
+  const key = r.order_record_id;
+  if (key && seen.has(key)) { stats.duplicatesRemoved++; continue; }
+  if (key) seen.add(key);
+  cleaned.push(r);
 }
 
-// Derive the product catalog from the cleaned transactions.
-const bySku = new Map();
-for (const r of deduped) {
-  if (!bySku.has(r.product_sku)) bySku.set(r.product_sku, []);
-  bySku.get(r.product_sku).push(r);
+const storeName = mode(raw.map((r) => collapse(r.business_name))) || 'the store';
+
+// ----- derive the catalog (one entry per category) -------------------------
+const byCat = new Map();
+for (const r of cleaned) {
+  if (!r.category) continue;
+  if (!byCat.has(r.category)) byCat.set(r.category, []);
+  byCat.get(r.category).push(r);
 }
+
+const num0 = (v) => (typeof v === 'number' ? v : null);
 const products = [];
-for (const p of PRODUCTS) {
-  const lines = bySku.get(p.sku);
-  if (!lines || !lines.length) continue; // only products that actually appear
-  const deliveredQty = lines.filter((l) => l.status === 'delivered').reduce((s, l) => s + l.quantity, 0);
-  const returnedLines = lines.filter((l) => l.status === 'returned').length;
-  const soldLines = lines.filter((l) => l.status !== 'cancelled').length;
-  const derivedPrice = Math.round(median(lines.map((l) => l.unit_price)) * 100) / 100;
-  const h = hash(p.sku);
+for (const category of CATEGORY_ORDER) {
+  const lines = byCat.get(category);
+  if (!lines || !lines.length) continue;
+
+  const prices = lines.map((l) => num0(l.unit_price)).filter((x) => x !== null);
+  const ratings = lines.map((l) => num0(l.customer_rating)).filter((x) => x !== null);
+  const deliveries = lines.map((l) => num0(l.delivery_days)).filter((x) => x !== null);
+  const notCancelled = lines.filter((l) => l.order_status && l.order_status !== 'cancelled');
+  const returned = lines.filter((l) => l.order_status === 'returned');
+  const unitsSold = lines
+    .filter((l) => l.order_status === 'completed')
+    .reduce((s, l) => s + (num0(l.quantity) || 0), 0);
+
+  const price = median(prices);
   products.push({
-    id: p.sku,
-    slug: slugify(p.name),
-    name: p.name,
-    category: p.category,
-    price: derivedPrice,
-    description: p.description,
-    accentColor: ACCENTS[p.category] || '#475569',
-    rating: Math.round((3.6 + h * 1.3) * 10) / 10,
-    ratingCount: 20 + Math.floor(h * 480),
-    stock: 12 + Math.floor(hash(p.sku + 'stock') * 188),
-    unitsSold: deliveredQty,
-    returnRate: soldLines ? Math.round((returnedLines / soldLines) * 1000) / 10 : 0,
+    id: slugify(category),
+    slug: slugify(category),
+    name: category,
+    category,
+    tagline: CATEGORY_META[category].tagline,
+    price: price !== null ? Math.round(price * 100) / 100 : 0,
+    priceMin: prices.length ? Math.round(Math.min(...prices) * 100) / 100 : 0,
+    priceMax: prices.length ? Math.round(Math.max(...prices) * 100) / 100 : 0,
+    description:
+      `Browse the ${category} range at ${storeName}. ${CATEGORY_META[category].tagline}. ` +
+      `Based on ${lines.length} real orders` +
+      (ratings.length ? `, rated ${(Math.round(mean(ratings) * 10) / 10)}/5 on average` : '') +
+      (deliveries.length ? `, delivered in ~${Math.round(mean(deliveries))} days` : '') +
+      '.',
+    accentColor: CATEGORY_META[category].accent,
+    rating: ratings.length ? Math.round(mean(ratings) * 10) / 10 : 0,
+    ratingCount: ratings.length,
+    orders: lines.length,
+    unitsSold,
+    returnRate: notCancelled.length ? Math.round((returned.length / notCancelled.length) * 1000) / 10 : 0,
+    avgDeliveryDays: deliveries.length ? Math.round(mean(deliveries)) : 0,
+    topIssue: mode(returned.map((l) => l.issue_reason)) || mode(lines.map((l) => l.issue_reason)) || '—',
+    topCity: mode(lines.map((l) => l.city)) || '—',
+    topChannel: mode(lines.map((l) => l.marketing_channel)) || '—',
   });
 }
-products.sort((a, b) => a.category.localeCompare(b.category) || a.name.localeCompare(b.name));
+products.sort((a, b) => b.orders - a.orders);
 
 // ----- write outputs -------------------------------------------------------
 const outDir = path.join(__dirname, 'clean');
 fs.mkdirSync(outDir, { recursive: true });
 
-const CLEAN_COLUMNS = ['order_id', 'order_date', 'customer_name', 'product_sku', 'product_name', 'category', 'unit_price', 'quantity', 'line_total', 'status', 'return_reason'];
-fs.writeFileSync(path.join(outDir, 'orders_clean.csv'), stringify(deduped, CLEAN_COLUMNS));
+const COLS = ['order_record_id', 'order_id', 'customer_name', 'city', 'order_date', 'category', 'order_status', 'quantity', 'unit_price', 'discount_pct', 'net_amount', 'customer_rating', 'delivery_days', 'data_source', 'marketing_channel', 'warehouse', 'device_type', 'issue_reason'];
+fs.writeFileSync(path.join(outDir, 'orders_clean.csv'), stringify(cleaned, COLS));
 fs.writeFileSync(path.join(outDir, 'products.json'), JSON.stringify(products, null, 2) + '\n');
 
-const categories = [...new Set(products.map((p) => p.category))].sort();
 const report = `# Data Cleaning Report
 
-Generated from \`data/raw/orders_raw.csv\` by \`data/clean.js\`.
+Source: \`data/raw/orders_raw.csv\` — the real ${storeName} orders/returns export.
+Generated by \`data/clean.js\`.
+
+> The dataset has no product-level identity, so the catalog is derived at the
+> **category** level: each category becomes one storefront entry enriched with
+> real aggregated statistics.
 
 ## Summary
 
 | Metric | Value |
 | --- | ---: |
 | Raw rows read | ${stats.rawRows} |
-| Dropped — missing order id | ${stats.droppedMissingOrderId} |
-| Dropped — unresolvable product | ${stats.droppedUnresolved} |
-| Duplicate lines removed | ${stats.duplicatesRemoved} |
-| **Clean transaction rows** | **${deduped.length}** |
-| Products derived | ${products.length} |
-| Categories normalised to | ${categories.length} |
+| Duplicate lines removed (same order_record_id) | ${stats.duplicatesRemoved} |
+| **Clean transaction rows** | **${cleaned.length}** |
+| Category-level products derived | ${products.length} |
 
-## Field-level fixes
+## Normalisation (messy variants → canonical)
+
+| Field | Raw distinct variants | Canonical | Rows normalised |
+| --- | ---: | ---: | ---: |
+| Category | ${stats.rawCategoryVariants.size} | ${products.length} | ${stats.categoriesNormalised} |
+| Order status | ${stats.rawStatusVariants.size} | 5 | ${stats.statusNormalised} |
+| Issue reason | ${stats.rawIssueVariants.size} | — | ${stats.issuesNormalised} |
+| Data source | ${stats.rawSourceVariants.size} | — | ${stats.sourcesNormalised} |
+| City (incl. Arabic⇄English, typos) | ${stats.rawCityVariants.size} | ${new Set(cleaned.map((r) => r.city).filter(Boolean)).size} | ${stats.citiesNormalised} |
+
+## Invalid / missing data handled
 
 | Fix | Count |
 | --- | ---: |
-| Product names normalised (case/spacing/punctuation) | ${stats.namesNormalised} |
-| Category labels normalised | ${stats.categoriesNormalised} |
-| Prices re-parsed from currency/comma formats | ${stats.pricesReformatted} |
-| Prices imputed (missing/invalid → product median) | ${stats.pricesImputed} |
-| Prices rejected as invalid (≤0 or outlier) | ${stats.pricesInvalid} |
-| Quantities imputed (missing → 1) | ${stats.quantitiesImputed} |
-| Quantities clamped (invalid → 1) | ${stats.quantitiesInvalid} |
+| Prices rejected (sentinels -999/1000000, ≤0, out of range) | ${stats.pricesRejected} |
+| Quantities rejected (sentinels / invalid) | ${stats.quantitiesRejected} |
+| Ratings rejected (outside 1–5) | ${stats.ratingsRejected} |
+| Category missing/unmapped | ${stats.categoryMissing} |
+| Order status missing | ${stats.statusMissing} |
 | Dates left blank (unparseable) | ${stats.datesUnparseable} |
-| Return reasons cleared (set on non-returns) | ${stats.reasonsCleared} |
-| Return reasons filled ("Unspecified") | ${stats.reasonsFilled} |
 
-## Canonical categories
+## Derived catalog
 
-${categories.map((c) => `- ${c} (${products.filter((p) => p.category === c).length} products)`).join('\n')}
+| Category | Orders | Median price | Avg rating | Return rate | Top city |
+| --- | ---: | ---: | ---: | ---: | --- |
+${products.map((p) => `| ${p.name} | ${p.orders} | ${p.price} | ${p.rating} | ${p.returnRate}% | ${p.topCity} |`).join('\n')}
 
 ## Outputs
 
-- \`clean/orders_clean.csv\` — ${deduped.length} analysis-ready rows
-- \`clean/products.json\` — ${products.length} products consumed by the API
+- \`clean/orders_clean.csv\` — ${cleaned.length} analysis-ready rows
+- \`clean/products.json\` — ${products.length} category products consumed by the API
 `;
 fs.writeFileSync(path.join(outDir, 'cleaning_report.md'), report);
 
-console.log(`Cleaned ${stats.rawRows} -> ${deduped.length} rows; derived ${products.length} products.`);
-console.log(`Dropped: ${stats.droppedMissingOrderId} (no id) + ${stats.droppedUnresolved} (unresolved); removed ${stats.duplicatesRemoved} duplicates.`);
+console.log(`Cleaned ${stats.rawRows} -> ${cleaned.length} rows (removed ${stats.duplicatesRemoved} duplicates).`);
+console.log(`Derived ${products.length} category products: ${products.map((p) => `${p.name}(${p.orders})`).join(', ')}`);
+console.log(`Rejected numerics — prices:${stats.pricesRejected} qty:${stats.quantitiesRejected} ratings:${stats.ratingsRejected}`);

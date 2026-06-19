@@ -1,6 +1,6 @@
 # ecommerce (working title)
 
-A small but complete storefront demo: an **Angular** frontend, a **Node.js + Express + MongoDB** products API, and a **data‑cleaning pipeline** that turns a messy orders/returns dataset into the clean product catalog the app serves.
+A small but complete storefront demo: an **Angular** frontend, a **Node.js + Express + MongoDB** products API, and a **data‑cleaning pipeline** that turns the real, messy UrbanSouq orders/returns dataset into a clean, category‑level catalog the app serves.
 
 > The name `ecommerce` is a placeholder until the client picks a brand — it lives in a couple of obvious spots (page title, header) and is easy to change.
 
@@ -36,12 +36,11 @@ The catalog the API serves is **derived from cleaned transaction data**, not han
 
 ```
 ecommerce/
-├── data/                 # Data generation + cleaning pipeline (plain Node, no deps)
-│   ├── catalog.js        #   product master (display metadata)
-│   ├── generate-raw.js   #   creates a messy orders/returns CSV (~940 rows)
-│   ├── clean.js          #   cleans it -> products.json + orders_clean.csv + report
-│   ├── raw/              #   generated input
-│   └── clean/            #   generated outputs (consumed by the API)
+├── data/                 # Data-cleaning pipeline (plain Node, no deps)
+│   ├── clean.js          #   cleans raw -> products.json + orders_clean.csv + report
+│   ├── lib/csv.js        #   tiny CSV parse/stringify
+│   ├── raw/              #   raw input (the client's real export)
+│   └── clean/            #   cleaned outputs (consumed by the API)
 ├── backend/              # Express + Mongoose API
 │   └── src/
 │       ├── server.js     #   app entry
@@ -71,7 +70,7 @@ From the repository root:
 # 1. Install dependencies for both apps
 npm run install:all
 
-# 2. (Optional) regenerate the cleaned data — outputs are already committed
+# 2. (Optional) re-run the data cleaning — outputs are already committed
 npm run data
 
 # 3. Start the API  (terminal 1)
@@ -118,14 +117,14 @@ curl "http://localhost:3000/api/products/wireless-mouse"
 
 ## Data cleaning
 
-The brief was to clean an orders/returns dataset before using it. Since no real file was provided, `data/generate-raw.js` produces a realistic, **intentionally messy** dataset (~940 rows) and `data/clean.js` cleans it. The pipeline is deterministic (seeded), so re‑running yields the same files. Current run:
+`data/clean.js` cleans the real UrbanSouq orders/returns export (`data/raw/orders_raw.csv`, ~940 rows). The dataset has **no product‑level identity** — its only product dimension is the category — so the catalog is derived at the **category** level, with each category enriched by real aggregated stats. Current run:
 
-- **940 → 879** clean transaction rows
-- Dropped **6** rows with no order id + **9** with an unresolvable product; removed **46** duplicate lines
-- Normalised hundreds of inconsistent product names, category labels and price formats; imputed missing prices from each product's median
-- Derived **38** products across **8** categories
+- **940 → 913** clean transaction rows (removed 27 duplicate lines)
+- Normalised category (18 spellings → 6), order status (15 → 5), issue reason and data source, and **city names across Arabic⇄English, typos and separators** (62 → 15, e.g. `cair0` / `القاهرة` → Cairo)
+- Rejected sentinel/garbage numerics (`-999`, `1000000`) and out‑of‑range values
+- Derived **6 category products** with median price, average rating, units sold, return rate, average delivery time and top city/channel/return‑reason
 
-See [`data/README.md`](data/README.md) and the generated [`data/clean/cleaning_report.md`](data/clean/cleaning_report.md). **To use a real dataset**, drop it in and point `clean.js` at it (the column mapping is documented there).
+See [`data/README.md`](data/README.md) and the generated [`data/clean/cleaning_report.md`](data/clean/cleaning_report.md). **To use a different dataset**, replace `data/raw/orders_raw.csv` and adjust the column mapping in `clean.js` (documented in data/README).
 
 ## Notes for the client
 

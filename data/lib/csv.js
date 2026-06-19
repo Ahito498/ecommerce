@@ -8,6 +8,7 @@
 
 /** Parse a CSV string into an array of row objects keyed by the header row. */
 function parse(text) {
+  if (text.charCodeAt(0) === 0xfeff) text = text.slice(1); // strip UTF-8 BOM
   const rows = [];
   let field = '';
   let record = [];

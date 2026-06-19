@@ -3,14 +3,21 @@ export interface Product {
   slug: string;
   name: string;
   category: string;
+  tagline: string;
   price: number;
+  priceMin: number;
+  priceMax: number;
   description: string;
   accentColor: string;
   rating: number;
   ratingCount: number;
-  stock: number;
+  orders: number;
   unitsSold: number;
   returnRate: number;
+  avgDeliveryDays: number;
+  topIssue: string;
+  topCity: string;
+  topChannel: string;
 }
 
 export interface ProductPage {

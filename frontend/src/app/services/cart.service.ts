@@ -39,11 +39,11 @@ export class CartService {
       if (existing) {
         return lines.map((l) =>
           l.product.id === product.id
-            ? { ...l, quantity: clampStock(l.quantity + quantity, product) }
+            ? { ...l, quantity: Math.max(1, l.quantity + quantity) }
             : l
         );
       }
-      return [...lines, { product, quantity: clampStock(quantity, product) }];
+      return [...lines, { product, quantity: Math.max(1, quantity) }];
     });
   }
 
@@ -54,9 +54,7 @@ export class CartService {
     }
     this._lines.update((lines) =>
       lines.map((l) =>
-        l.product.id === productId
-          ? { ...l, quantity: clampStock(quantity, l.product) }
-          : l
+        l.product.id === productId ? { ...l, quantity: Math.max(1, quantity) } : l
       )
     );
   }
@@ -86,9 +84,4 @@ export class CartService {
       /* ignore storage failures (e.g. private mode) */
     }
   }
-}
-
-function clampStock(quantity: number, product: Product): number {
-  const max = product.stock > 0 ? product.stock : quantity;
-  return Math.max(1, Math.min(quantity, max));
 }

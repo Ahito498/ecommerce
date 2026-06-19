@@ -44,23 +44,12 @@
 .star { color: #f59e0b; }
 .muted { color: var(--muted); }
 
-.price { font-size: 1.9rem; font-weight: 800; }
+.tagline { margin: 0; color: var(--muted); font-size: 1rem; }
+
+.price { font-size: 1.9rem; font-weight: 800; display: flex; align-items: baseline; flex-wrap: wrap; gap: 0.6rem; }
+.price .range { font-size: 0.85rem; font-weight: 500; color: var(--muted); }
 
 .desc { color: #334155; margin: 0.25rem 0; }
-
-.stock {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.4rem;
-  font-size: 0.9rem;
-  font-weight: 600;
-  color: var(--success);
-}
-.stock .dot {
-  width: 8px; height: 8px; border-radius: 50%;
-  background: currentColor;
-}
-.stock.out { color: var(--danger); }
 
 .buy {
   display: flex;
